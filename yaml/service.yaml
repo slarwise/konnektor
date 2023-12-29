@@ -1,0 +1,12 @@
+kind: Service
+apiVersion: v1
+metadata:
+  name: kubeconform
+  namespace: kubeconform
+spec:
+  selector:
+    app: kubeconform
+    hello: world
+  ports:
+    - port: 80
+      targetPort: http
