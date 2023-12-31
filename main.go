@@ -29,12 +29,14 @@ type PodTemplate struct {
 	} `yaml:"metadata"`
 	Spec struct {
 		Containers []struct {
-			Ports []struct {
-				containerPort int    `yaml:"containerPort"`
-				name          string `yaml:"name"`
-			} `yaml:"ports"`
+			Ports []ContainerPort `yaml:"ports"`
 		} `yamls:"containers"`
 	} `yaml:"spec"`
+}
+
+type ContainerPort struct {
+	ContainerPort int    `yaml:"containerPort"`
+	Name          string `yaml:"name"`
 }
 
 // Create a CLI that
@@ -46,6 +48,9 @@ type PodTemplate struct {
 // The Service's spec.ports.targetPort matches one of the Deployment's
 // spec.template.spec.containers[*].ports[*].[containerPort,name]
 // Would be nice to print out if they do, and how they connect
+
+// Take 2: Return what matches there are between the Service and Deployment.
+// There could be more than 1
 
 func main() {
 	deploymentFlag := flag.String("deployment", "", "filepath to Deployment, such as deployment.yaml")
@@ -80,4 +85,30 @@ func main() {
 		log.Fatalf("Could not parse Deployment %s\n", err)
 	}
 	log.Println(deployment.Spec.Template.Metadata.Labels)
+}
+
+func getMatches(service Service, pod PodTemplate) bool {
+	return labelsMatchSelector(service.Spec.Selector, pod.Metadata.Labels)
+}
+
+func labelsMatchSelector(selector map[string]string, podLabels map[string]string) bool {
+	matches := 0
+	for sl, sv := range selector {
+		pv, ok := podLabels[sl]
+		if ok && pv == sv {
+			matches += 1
+		}
+	}
+	return matches == len(selector)
+}
+
+func getMatchingPorts(targetPort string, containerPorts []ContainerPort) []ContainerPort {
+	// Check if the name OR containerPort matches targetPort
+	matches := []ContainerPort{}
+	for _, cp := range containerPorts {
+		if targetPort == cp.Name {
+			matches = append(matches, cp)
+		}
+	}
+	return matches
 }
