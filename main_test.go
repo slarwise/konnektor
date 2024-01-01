@@ -2,6 +2,9 @@ package main
 
 import (
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 type Selector map[string]string
@@ -34,14 +37,36 @@ func TestLabelsMatchSelector(t *testing.T) {
 }
 
 func TestGetMatchingPorts(t *testing.T) {
-	targetPort := "http"
-	containerPorts := []ContainerPort{
-		{
-			ContainerPort: 8080,
-			Name:          "http",
+	servicePort := corev1.ServicePort{
+		TargetPort: intstr.IntOrString{
+			Type:   intstr.String,
+			StrVal: "http",
 		},
 	}
-	if len(getMatchingPorts(targetPort, containerPorts)) != 1 {
+	containerPort := corev1.ContainerPort{
+		Name: "http",
+	}
+	if !portsMatch(servicePort, containerPort) {
+		t.Fail()
+	}
+
+	containerPort.Name = "asdf"
+	if portsMatch(servicePort, containerPort) {
+		t.Fail()
+	}
+
+	servicePort = corev1.ServicePort{
+		TargetPort: intstr.IntOrString{
+			Type:   intstr.Int,
+			IntVal: 8080,
+		},
+	}
+	if portsMatch(servicePort, containerPort) {
+		t.Fail()
+	}
+
+	containerPort.ContainerPort = 8080
+	if !portsMatch(servicePort, containerPort) {
 		t.Fail()
 	}
 }
