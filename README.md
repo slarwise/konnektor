@@ -1,4 +1,4 @@
-# Konnektor - Verify that a Deployment and a Service will connect
+# Konnektor
 
 Check whether a Service will connect to a Deployment.
 
