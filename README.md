@@ -19,8 +19,8 @@ Example output:
 
 ```json
 {
-  "service": "kubeconform",
-  "deployment": "kubeconform",
+  "service": "myapp",
+  "deployment": "myapp",
   "selector_is_matching": true,
   "matching_target_ports": ["http"]
 }
