@@ -1,94 +1,118 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
+	"fmt"
+	"io"
 	"log"
 	"os"
 
-	"gopkg.in/yaml.v3"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/kubernetes/scheme"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 )
 
-type Service struct {
-	Spec struct {
-		Selector map[string]string `yaml:"selector"`
-		Ports    []struct {
-			TargetPort interface{} `yaml:"targetPort"`
-		} `yaml:"ports"`
-	} `yaml:"spec"`
+type Result struct {
+	Service             string               `json:"service"`
+	Deployment          string               `json:"deployment"`
+	SelectorIsMatching  bool                 `json:"selector_is_matching"`
+	MatchingTargetPorts []intstr.IntOrString `json:"matching_target_ports"`
 }
-
-type Deployment struct {
-	Spec struct {
-		Template PodTemplate `yaml:"template"`
-	} `yaml:"spec"`
-}
-
-type PodTemplate struct {
-	Metadata struct {
-		Labels map[string]string `yaml:"labels"`
-	} `yaml:"metadata"`
-	Spec struct {
-		Containers []struct {
-			Ports []ContainerPort `yaml:"ports"`
-		} `yamls:"containers"`
-	} `yaml:"spec"`
-}
-
-type ContainerPort struct {
-	ContainerPort int    `yaml:"containerPort"`
-	Name          string `yaml:"name"`
-}
-
-// Create a CLI that
-// Takes a Service and a Deployment file and
-// checks if they match, i.e.
-// all of the Service's spec.selector's labels are set on the Deployment's
-// spec.template.spec.metadata.labels
-// And
-// The Service's spec.ports.targetPort matches one of the Deployment's
-// spec.template.spec.containers[*].ports[*].[containerPort,name]
-// Would be nice to print out if they do, and how they connect
-
-// Take 2: Return what matches there are between the Service and Deployment.
-// There could be more than 1
 
 func main() {
-	deploymentFlag := flag.String("deployment", "", "filepath to Deployment, such as deployment.yaml")
-	serviceFlag := flag.String("service", "", "filepath to Service, such as service.yaml")
+	flag.Usage = func() {
+		fmt.Println("Verify if a Service connects to a Deployment")
+		fmt.Println("Provide yaml by files or stdin")
+		fmt.Println("EXAMPLES")
+		fmt.Printf("    %s service.yaml deployment.yaml\n", os.Args[0])
+		fmt.Printf("    kustomize build ./yaml | %s\n", os.Args[0])
+	}
 	flag.Parse()
-	if *deploymentFlag == "" {
-		log.Fatalln("-deployment must be provided")
-	}
-	if *serviceFlag == "" {
-		log.Fatalln("-service must be provided")
+	args := flag.Args()
+	var yamlData []byte
+	if len(args) == 0 {
+		bytes, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			log.Fatalf("Could not read from stdin: %s\n", err)
+		}
+		yamlData = bytes
+	} else {
+		for _, f := range args {
+			file, err := os.ReadFile(f)
+			if err != nil {
+				log.Fatalf("Could not read file: %s\n", err)
+			}
+			yamlData = append(yamlData, file...)
+			newDocumentMarker := []byte("---\n")
+			yamlData = append(yamlData, newDocumentMarker...)
+		}
 	}
 
-	serviceFile, err := os.ReadFile(*serviceFlag)
-	if err != nil {
-		log.Fatalf("Could not read service file: %s\n", err)
+	documents := bytes.Split(yamlData, []byte("---"))
+	deserializer := scheme.Codecs.UniversalDeserializer()
+	var objects []runtime.Object
+	for _, d := range documents {
+		if bytes.TrimSpace(d) == nil {
+			continue
+		}
+		obj, _, err := deserializer.Decode(d, nil, nil)
+		if err != nil {
+			log.Fatalf("Could not deserialize object: %s\n", err)
+		}
+		objects = append(objects, obj)
 	}
-	deploymentFile, err := os.ReadFile(*deploymentFlag)
-	if err != nil {
-		log.Fatalf("Could not read deployment: file %s\n", err)
+	var service *corev1.Service
+	var deployment *appsv1.Deployment
+	for _, o := range objects {
+		switch o.GetObjectKind().GroupVersionKind().Kind {
+		case "Service":
+			if service != nil {
+				log.Fatalln("Found more than one Service")
+			}
+			service = o.(*corev1.Service)
+		case "Deployment":
+			if deployment != nil {
+				log.Fatalln("Found more than one Deployment")
+			}
+			deployment = o.(*appsv1.Deployment)
+		default:
+			log.Fatalf("No support for kind: %s\n", o.GetObjectKind().GroupVersionKind().Kind)
+		}
+	}
+	if service == nil {
+		fmt.Fprintf(os.Stderr, "No Service found")
+		os.Exit(1)
+	}
+	if deployment == nil {
+		fmt.Fprintf(os.Stderr, "No Deployment found")
+		os.Exit(1)
 	}
 
-	service := Service{}
-	err = yaml.Unmarshal(serviceFile, &service)
-	if err != nil {
-		log.Fatalf("Could not parse Service: %s\n", err)
+	var result Result
+	result.Service = service.Name
+	result.Deployment = deployment.Name
+	result.SelectorIsMatching = labelsMatchSelector(service.Spec.Selector, deployment.Spec.Template.Labels)
+	for _, servicePort := range service.Spec.Ports {
+		for _, container := range deployment.Spec.Template.Spec.Containers {
+			_ = container.Name
+			for _, containerPort := range container.Ports {
+				if portsMatch(servicePort, containerPort) {
+					result.MatchingTargetPorts = append(result.MatchingTargetPorts, servicePort.TargetPort)
+				}
+			}
+		}
 	}
-	log.Println(service.Spec.Selector)
-	log.Println(service.Spec.Ports[0])
-	deployment := Deployment{}
-	err = yaml.Unmarshal(deploymentFile, &deployment)
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	err := encoder.Encode(result)
 	if err != nil {
-		log.Fatalf("Could not parse Deployment %s\n", err)
+		log.Fatalf("Failed to encode json result %s\n", err)
 	}
-	log.Println(deployment.Spec.Template.Metadata.Labels)
-}
-
-func getMatches(service Service, pod PodTemplate) bool {
-	return labelsMatchSelector(service.Spec.Selector, pod.Metadata.Labels)
 }
 
 func labelsMatchSelector(selector map[string]string, podLabels map[string]string) bool {
@@ -102,13 +126,17 @@ func labelsMatchSelector(selector map[string]string, podLabels map[string]string
 	return matches == len(selector)
 }
 
-func getMatchingPorts(targetPort string, containerPorts []ContainerPort) []ContainerPort {
+func portsMatch(servicePort corev1.ServicePort, containerPort corev1.ContainerPort) bool {
 	// Check if the name OR containerPort matches targetPort
-	matches := []ContainerPort{}
-	for _, cp := range containerPorts {
-		if targetPort == cp.Name {
-			matches = append(matches, cp)
+	switch servicePort.TargetPort.Type {
+	case intstr.Int:
+		if servicePort.TargetPort.IntVal == containerPort.ContainerPort {
+			return true
+		}
+	case intstr.String:
+		if servicePort.TargetPort.StrVal == containerPort.Name {
+			return true
 		}
 	}
-	return matches
+	return false
 }

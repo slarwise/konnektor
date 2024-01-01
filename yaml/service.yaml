@@ -6,7 +6,6 @@ metadata:
 spec:
   selector:
     app: kubeconform
-    hello: world
   ports:
     - port: 80
       targetPort: http
