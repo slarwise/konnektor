@@ -86,11 +86,11 @@ func main() {
 		}
 	}
 	if service == nil {
-		fmt.Fprintf(os.Stderr, "No Service found")
+		fmt.Fprintln(os.Stderr, "No Service found")
 		os.Exit(1)
 	}
 	if deployment == nil {
-		fmt.Fprintf(os.Stderr, "No Deployment found")
+		fmt.Fprintln(os.Stderr, "No Deployment found")
 		os.Exit(1)
 	}
 
