@@ -62,7 +62,8 @@ func main() {
 		}
 		obj, _, err := deserializer.Decode(d, nil, nil)
 		if err != nil {
-			log.Fatalf("Could not deserialize object: %s\n", err)
+			// Unknown object, skip it
+			continue
 		}
 		objects = append(objects, obj)
 	}
@@ -81,7 +82,7 @@ func main() {
 			}
 			deployment = o.(*appsv1.Deployment)
 		default:
-			log.Fatalf("No support for kind: %s\n", o.GetObjectKind().GroupVersionKind().Kind)
+			// Do nothing for other kubernetes objects
 		}
 	}
 	if service == nil {
