@@ -12,8 +12,8 @@ go install github.com/slarwise/konnektor
 ## Usage
 
 ```sh
-konnektor ./yaml/service.yaml ./yaml/deployment.yaml
-kustomize build ./yaml | konnektor
+konnektor ./examples/service.yaml ./examples/deployment.yaml
+kustomize build ./examples | konnektor
 ```
 
 Example output:

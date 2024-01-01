@@ -1,21 +1,21 @@
 kind: Deployment
 apiVersion: apps/v1
 metadata:
-  name: kubeconform
-  namespace: kubeconform
+  name: myapp
+  namespace: apps
 spec:
   selector:
     matchLabels:
-      app: kubeconform
+      app: myapp
   template:
     metadata:
-      name: kubeconform
+      name: myapp
       labels:
-        app: kubeconform
+        app: myapp
     spec:
       containers:
-        - name: kubeconform
-          image: k3d-daas-registry:5050/kubeconform:latest
+        - name: myapp
+          image: myapp:latest
           ports:
             - containerPort: 8080
               name: http

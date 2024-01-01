@@ -1,11 +1,11 @@
 kind: Service
 apiVersion: v1
 metadata:
-  name: kubeconform
-  namespace: kubeconform
+  name: myapp
+  namespace: apps
 spec:
   selector:
-    app: kubeconform
+    app: myapp
   ports:
     - port: 80
       targetPort: http
