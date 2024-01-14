@@ -2,35 +2,52 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"slices"
 
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	"gopkg.in/yaml.v3"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/scheme"
-
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
 )
 
 type Result struct {
-	Service             string               `json:"service"`
-	Deployment          string               `json:"deployment"`
-	SelectorIsMatching  bool                 `json:"selector_is_matching"`
-	MatchingTargetPorts []intstr.IntOrString `json:"matching_target_ports"`
+	ServiceMonitors []ServiceMonitor `json:"service_monitors"`
+	Services        []Service        `json:"service"`
+}
+
+type ServiceMonitor struct {
+	Name     string   `json:"name"`
+	Services []string `json:"services"`
+}
+
+type Service struct {
+	Name        string   `json:"name"`
+	Deployments []string `json:"deployments"`
 }
 
 func main() {
+	ignoreNamespace := flag.Bool("i", false, "Do not check whether namespaces match")
 	flag.Usage = func() {
-		fmt.Println("Verify if a Service connects to a Deployment")
-		fmt.Println("Provide yaml by files or stdin")
-		fmt.Println("EXAMPLES")
-		fmt.Printf("    %s service.yaml deployment.yaml\n", os.Args[0])
-		fmt.Printf("    kustomize build ./yaml | %s\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, `See how service monitors, services and deployments connect
+Usage of %s:
+	%s [flags] [FILE]
+
+Provide yaml files by files or stdin
+Flags:
+`, os.Args[0], os.Args[0])
+		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, `EXAMPLES
+    %s service-monitor.yaml service.yaml deployment.yaml
+    kustomize build ./yaml | %s
+`, os.Args[0], os.Args[0])
 	}
 	flag.Parse()
 	args := flag.Args()
@@ -53,6 +70,7 @@ func main() {
 		}
 	}
 
+	monitoringv1.AddToScheme(scheme.Scheme)
 	documents := bytes.Split(yamlData, []byte("---"))
 	deserializer := scheme.Codecs.UniversalDeserializer()
 	var objects []runtime.Object
@@ -67,52 +85,65 @@ func main() {
 		}
 		objects = append(objects, obj)
 	}
-	var service *corev1.Service
-	var deployment *appsv1.Deployment
+	var services []*corev1.Service
+	var deployments []*appsv1.Deployment
+	var serviceMonitors []*monitoringv1.ServiceMonitor
 	for _, o := range objects {
 		switch o.GetObjectKind().GroupVersionKind().Kind {
 		case "Service":
-			if service != nil {
-				log.Fatalln("Found more than one Service")
-			}
-			service = o.(*corev1.Service)
+			services = append(services, o.(*corev1.Service))
 		case "Deployment":
-			if deployment != nil {
-				log.Fatalln("Found more than one Deployment")
-			}
-			deployment = o.(*appsv1.Deployment)
+			deployments = append(deployments, o.(*appsv1.Deployment))
+		case "ServiceMonitor":
+			serviceMonitors = append(serviceMonitors, o.(*monitoringv1.ServiceMonitor))
 		default:
 			// Do nothing for other kubernetes objects
 		}
 	}
-	if service == nil {
-		fmt.Fprintln(os.Stderr, "No Service found")
-		os.Exit(1)
-	}
-	if deployment == nil {
-		fmt.Fprintln(os.Stderr, "No Deployment found")
-		os.Exit(1)
+
+	result := Result{}
+	for _, sm := range serviceMonitors {
+		matchingServices := []string{}
+		for _, s := range services {
+			selectorMatch := labelsMatchSelector(sm.Spec.Selector.MatchLabels, s.Labels)
+			nsMatch := true
+			if !*ignoreNamespace {
+				nsMatch = slices.Contains(sm.Spec.NamespaceSelector.MatchNames, s.Namespace)
+			}
+			if nsMatch && selectorMatch {
+				matchingServices = append(matchingServices, s.Name)
+			}
+		}
+		result.ServiceMonitors = append(result.ServiceMonitors, ServiceMonitor{
+			Name:     sm.Name,
+			Services: matchingServices,
+		})
 	}
 
-	var result Result
-	result.Service = service.Name
-	result.Deployment = deployment.Name
-	result.SelectorIsMatching = labelsMatchSelector(service.Spec.Selector, deployment.Spec.Template.Labels)
-	for _, servicePort := range service.Spec.Ports {
-		for _, container := range deployment.Spec.Template.Spec.Containers {
-			_ = container.Name
-			for _, containerPort := range container.Ports {
-				if portsMatch(servicePort, containerPort) {
-					result.MatchingTargetPorts = append(result.MatchingTargetPorts, servicePort.TargetPort)
+	for _, s := range services {
+		matchingDeployments := []string{}
+		for _, servicePort := range s.Spec.Ports {
+			for _, d := range deployments {
+				for _, container := range d.Spec.Template.Spec.Containers {
+					for _, containerPort := range container.Ports {
+						if portsMatch(servicePort, containerPort) {
+							matchingDeployments = append(matchingDeployments, d.Name)
+						}
+					}
 				}
 			}
 		}
+		result.Services = append(result.Services, Service{
+			Name:        s.Name,
+			Deployments: matchingDeployments,
+		})
 	}
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
+
+	encoder := yaml.NewEncoder(os.Stdout)
+	encoder.SetIndent(2)
 	err := encoder.Encode(result)
 	if err != nil {
-		log.Fatalf("Failed to encode json result %s\n", err)
+		log.Fatalf("Failed to encode yaml result %s\n", err)
 	}
 }
 

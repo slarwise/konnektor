@@ -3,9 +3,12 @@ apiVersion: v1
 metadata:
   name: myapp
   namespace: apps
+  labels:
+    app: myapp
 spec:
   selector:
     app: myapp
   ports:
     - port: 80
       targetPort: http
+      name: http

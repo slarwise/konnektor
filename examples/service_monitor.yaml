@@ -1,0 +1,14 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: myapp
+  namespace: apps
+spec:
+  endpoints:
+    - port: http
+  selector:
+    matchLabels:
+      app: myapp
+  namespaceSelector:
+    matchNames:
+      - apps
