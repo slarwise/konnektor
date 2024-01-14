@@ -34,6 +34,7 @@ type Service struct {
 }
 
 func main() {
+	asdf
 	ignoreNamespace := flag.Bool("i", false, "Do not check whether namespaces match")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `See how service monitors, services and deployments connect
